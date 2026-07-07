@@ -14,6 +14,8 @@
 
 import os
 import copy
+import pandas as pd
+from ppdet.utils.difficulty_score import DifficultyScore
 
 try:
     from collections.abc import Sequence
@@ -75,6 +77,12 @@ class COCODataSet(DetDataset):
         self.load_crowd = load_crowd
         self.allow_empty = allow_empty
         self.empty_ratio = empty_ratio
+        # Load adaptive feature CSV
+        # Load precomputed lesion difficulty scores
+        self.difficulty_loader = DifficultyScore(
+    "/content/drive/MyDrive/RTDETR_project/difficulty_module/final_difficulty_scores.csv")
+
+        
 
     def _sample_empty(self, records, num):
         # if empty_ratio is out of [0. ,1.), do not sample the records
@@ -226,6 +234,19 @@ class COCODataSet(DetDataset):
                 for k, v in gt_rec.items():
                     if k in self.data_fields:
                         coco_rec[k] = v
+                # ----------------------------------------
+# Add adaptive lesion features
+# ----------------------------------------
+                difficulty = self.difficulty_loader.get_difficulty(im_fname)
+
+                coco_rec["adaptive_features"] = np.array([
+                   difficulty["lesion_size"],
+                   difficulty["border_unevenness"],
+                  difficulty["boundary_clarity"]], dtype=np.float32)
+
+                coco_rec["difficulty_score"] = np.float32(
+                  difficulty["difficulty_score"])
+# ---------------------------------------
 
                 # TODO: remove load_semantic
                 if self.load_semantic and 'semantic' in self.data_fields:
