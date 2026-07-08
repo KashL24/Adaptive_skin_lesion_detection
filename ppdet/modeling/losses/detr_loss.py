@@ -23,6 +23,7 @@ from ppdet.core.workspace import register
 from .iou_loss import GIoULoss
 from ..transformers import bbox_cxcywh_to_xyxy, sigmoid_focal_loss, varifocal_loss_with_logits
 from ..bbox_utils import bbox_iou
+from .diversity_loss import DiversityLoss
 
 __all__ = ['DETRLoss', 'DINOLoss', 'DINOv3Loss']
 
@@ -49,7 +50,7 @@ class DETRLoss(nn.Layer):
                  vfl_iou_type='bbox',
                  use_uni_match=False,
                  uni_match_ind=0):
-        r"""
+        """
         Args:
             num_classes (int): The number of classes.
             matcher (HungarianMatcher): It computes an assignment between the targets
@@ -75,6 +76,8 @@ class DETRLoss(nn.Layer):
                                                    loss_coeff['class'])
             self.loss_coeff['class'][-1] = loss_coeff['no_object']
         self.giou_loss = GIoULoss()
+        # Adaptive Diversity Loss
+        self.diversity_loss = DiversityLoss()
 
     def _get_loss_class(self,
                         logits,
@@ -308,23 +311,71 @@ class DETRLoss(nn.Layer):
             num_gts /= paddle.distributed.get_world_size()
         num_gts = paddle.clip(num_gts, min=1.)
         return num_gts
+    
+    def extract_positive_embeddings(self,
+                                decoder_embeddings,  match_indices):
+       """
+    Args:
+        decoder_embeddings: Tensor [B, Q, C]
+        match_indices: Hungarian match indices
 
-    def _get_prediction_loss(self,
-                             boxes,
-                             logits,
-                             gt_bbox,
-                             gt_class,
-                             masks=None,
-                             gt_mask=None,
-                             postfix="",
-                             dn_match_indices=None,
-                             num_gts=1,
-                             gt_score=None):
+    Returns:
+        Tensor [K, C]
+    """
+    
+       positive_embeddings = []
+
+       for batch_idx, (src_idx, _) in enumerate(match_indices):
+
+        if len(src_idx) == 0:
+            continue
+
+        emb = paddle.gather(
+            decoder_embeddings[batch_idx],
+            src_idx,
+            axis=0
+        )
+
+        positive_embeddings.append(emb)
+
+       if len(positive_embeddings) == 0:
+        return None
+
+       return paddle.concat(
+        positive_embeddings,
+        axis=0
+    )
+
+    def _get_prediction_loss(
+        self,
+        boxes,
+        logits,
+        gt_bbox,
+        gt_class,
+        masks=None,
+        gt_mask=None,
+        postfix="",
+        dn_match_indices=None,
+        num_gts=1,
+        gt_score=None,
+        decoder_embeddings=None,
+        difficulty_scores=None):
         if dn_match_indices is None:
             match_indices = self.matcher(
                 boxes, logits, gt_bbox, gt_class, masks=masks, gt_mask=gt_mask)
         else:
             match_indices = dn_match_indices
+        positive_embeddings = None
+
+        if decoder_embeddings is not None:
+
+          positive_embeddings = self.extract_positive_embeddings(
+          decoder_embeddings,
+          match_indices
+          )
+
+          if positive_embeddings is not None:
+             print("Positive Embeddings:",positive_embeddings.shape)
 
         if self.use_vfl:
             if gt_score is not None:  #ssod
@@ -414,6 +465,8 @@ class DETRLoss(nn.Layer):
         """
 
         dn_match_indices = kwargs.get("dn_match_indices", None)
+        decoder_embeddings = kwargs.get("decoder_embeddings", None)
+        difficulty_scores = kwargs.get("difficulty_scores", None)
         num_gts = kwargs.get("num_gts", None)
         if num_gts is None:
             num_gts = self._get_num_gts(gt_class)
@@ -428,7 +481,9 @@ class DETRLoss(nn.Layer):
             postfix=postfix,
             dn_match_indices=dn_match_indices,
             num_gts=num_gts,
-            gt_score=gt_score if gt_score is not None else None)
+            gt_score=gt_score if gt_score is not None else None,
+            decoder_embeddings=decoder_embeddings,
+             difficulty_scores=difficulty_scores)
 
         if self.aux_loss:
             total_loss.update(
