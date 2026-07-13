@@ -22,7 +22,7 @@ import paddle.nn.functional as F
 from ppdet.core.workspace import register
 from .iou_loss import GIoULoss
 from ..transformers import bbox_cxcywh_to_xyxy, sigmoid_focal_loss, varifocal_loss_with_logits
-from ..bbox_utils import bbox_iou
+from ..bbox_utils import bbox_iou,iou_similarity
 from .diversity_loss import DiversityLoss
 
 __all__ = ['DETRLoss', 'DINOLoss', 'DINOv3Loss']
@@ -214,6 +214,7 @@ class DETRLoss(nn.Layer):
         loss_class = []
         loss_bbox, loss_giou = [], []
         loss_mask, loss_dice = [], []
+        loss_adaptive_div = []
         if dn_match_indices is not None:
             match_indices = dn_match_indices
         elif self.use_uni_match:
@@ -261,6 +262,11 @@ class DETRLoss(nn.Layer):
                     if gt_score is not None else None)['loss_class' + postfix])
             loss_ = self._get_loss_bbox(aux_boxes, gt_bbox, match_indices,
                                         num_gts, postfix)
+
+            if "loss_adaptive_diversity" + postfix in loss_:
+               loss_adaptive_div.append(
+                  loss_["loss_adaptive_diversity" + postfix]
+             )
             loss_bbox.append(loss_['loss_bbox' + postfix])
             loss_giou.append(loss_['loss_giou' + postfix])
             if masks is not None and gt_mask is not None:
@@ -273,6 +279,11 @@ class DETRLoss(nn.Layer):
             "loss_bbox_aux" + postfix: paddle.add_n(loss_bbox),
             "loss_giou_aux" + postfix: paddle.add_n(loss_giou)
         }
+
+        if len(loss_adaptive_div) > 0:
+            loss["loss_adaptive_diversity_aux" + postfix] = paddle.add_n(
+                 loss_adaptive_div
+    )
         if masks is not None and gt_mask is not None:
             loss["loss_mask_aux" + postfix] = paddle.add_n(loss_mask)
             loss["loss_dice_aux" + postfix] = paddle.add_n(loss_dice)
@@ -312,16 +323,44 @@ class DETRLoss(nn.Layer):
         num_gts = paddle.clip(num_gts, min=1.)
         return num_gts
     
-    def extract_positive_embeddings(self,
+    def compute_adaptive_k(self,
+                       difficulty_score,
+                       k_min=4,
+                       k_max=20):
+
+        difficulty_score = float(difficulty_score)
+
+        k = round(
+            k_min +
+        difficulty_score * (k_max - k_min)
+    )
+
+        return int(max(k_min, min(k, k_max)))
+
+
+    def compute_lambda_div(self,
+                       difficulty_score,
+                       lambda_min=0.1,
+                       lambda_max=1.0):
+
+        difficulty_score = float(difficulty_score)
+
+        return (
+             lambda_min +
+             difficulty_score *
+            (lambda_max - lambda_min)
+        )
+    
+    """def extract_positive_embeddings(self,
                                 decoder_embeddings,  match_indices):
-       """
+       
     Args:
         decoder_embeddings: Tensor [B, Q, C]
         match_indices: Hungarian match indices
 
     Returns:
         Tensor [K, C]
-    """
+    
     
        positive_embeddings = []
 
@@ -345,6 +384,164 @@ class DETRLoss(nn.Layer):
         positive_embeddings,
         axis=0
     )
+ 
+    def compute_adaptive_diversity_loss(
+        self,
+        decoder_embeddings,
+        boxes,
+        gt_bbox,
+        match_indices,
+        difficulty_scores):
+      
+          Computes adaptive diversity loss.
+
+           Steps:
+           1. Extract matched embeddings
+           2. Compute IoU
+           3. Rank by IoU
+           4. Adaptive Top-k
+           5. Diversity loss
+           6. Adaptive weighting
+      
+
+    # --------------------------------------------------
+    # Step 1 : Positive embeddings
+    # --------------------------------------------------
+
+      positive_embeddings = self.extract_positive_embeddings(
+        decoder_embeddings,
+        match_indices
+      )
+
+      if positive_embeddings is None:
+        return paddle.zeros([1], dtype='float32')
+
+    # --------------------------------------------------
+    # Remaining implementation
+    # --------------------------------------------------
+
+      return paddle.zeros([1], dtype='float32')
+      """
+
+    def compute_adaptive_diversity_loss(
+        self,
+        decoder_embeddings,
+        boxes,
+        gt_bbox,
+        match_indices,
+        difficulty_scores):
+
+        
+     
+     batch_size = decoder_embeddings.shape[0]
+
+     
+
+     total_div_loss = paddle.zeros([1], dtype='float32')
+
+     for batch_idx in range(batch_size):
+        
+        
+        src_idx, gt_idx = match_indices[batch_idx]
+        
+        
+
+
+        if len(src_idx) <= 1:
+            continue
+
+        embeddings = paddle.gather(
+            decoder_embeddings[batch_idx],
+            src_idx,
+            axis=0
+        )
+
+        pred_boxes = paddle.gather(
+        boxes[batch_idx],
+        src_idx,
+        axis=0
+    )
+
+        target_boxes = paddle.gather(
+        gt_bbox[batch_idx],
+        gt_idx,
+        axis=0
+    )
+        pred_boxes_xyxy = bbox_cxcywh_to_xyxy(pred_boxes)
+        target_boxes_xyxy = bbox_cxcywh_to_xyxy(target_boxes)
+
+        ious = iou_similarity(
+        pred_boxes_xyxy,
+        target_boxes_xyxy
+    )
+
+        matched_ious = paddle.diagonal(ious)
+
+        
+
+        sorted_idx = paddle.argsort(
+        matched_ious,
+        descending=True
+    )
+       
+        
+
+        difficulty = float(difficulty_scores[batch_idx])
+
+        
+
+        difficulty = float(difficulty)
+
+        k = int(
+            max(
+                 2,
+                 min(
+                     len(sorted_idx),
+                     round(2 + difficulty * 2)
+        )
+    )
+)
+      
+    #select top k embeddings
+
+        topk_idx = sorted_idx[:k]
+
+        selected_embeddings = paddle.gather(
+          embeddings,
+          topk_idx,
+          axis=0
+)
+
+
+
+
+
+        
+        # ----------------------------
+# Diversity Loss
+# ----------------------------
+        div_loss = self.diversity_loss(
+          selected_embeddings
+       )
+
+# ----------------------------
+# Difficulty Weight
+# ----------------------------
+        lambda_div = difficulty
+
+        adaptive_div_loss = lambda_div * div_loss
+
+        
+        total_div_loss += adaptive_div_loss
+
+# end of for loop
+
+        
+        
+
+        
+
+     return total_div_loss / batch_size
 
     def _get_prediction_loss(
         self,
@@ -365,17 +562,6 @@ class DETRLoss(nn.Layer):
                 boxes, logits, gt_bbox, gt_class, masks=masks, gt_mask=gt_mask)
         else:
             match_indices = dn_match_indices
-        positive_embeddings = None
-
-        if decoder_embeddings is not None:
-
-          positive_embeddings = self.extract_positive_embeddings(
-          decoder_embeddings,
-          match_indices
-          )
-
-          if positive_embeddings is not None:
-             print("Positive Embeddings:",positive_embeddings.shape)
 
         if self.use_vfl:
             if gt_score is not None:  #ssod
@@ -423,6 +609,25 @@ class DETRLoss(nn.Layer):
             iou_score = None
 
         loss = dict()
+
+        
+         
+        adaptive_div_loss = paddle.zeros([1], dtype='float32')
+
+        if decoder_embeddings is not None:
+
+           
+
+           adaptive_div_loss = self.compute_adaptive_diversity_loss(
+                 decoder_embeddings,
+                 boxes,
+                gt_bbox,
+                match_indices,
+                difficulty_scores
+        )
+
+
+           
         loss.update(
             self._get_loss_class(
                 logits,
@@ -440,6 +645,10 @@ class DETRLoss(nn.Layer):
             loss.update(
                 self._get_loss_mask(masks, gt_mask, match_indices, num_gts,
                                     postfix))
+        loss["loss_adaptive_diversity"+ postfix] = adaptive_div_loss
+
+        
+
         return loss
 
     def forward(self,
@@ -587,6 +796,9 @@ class DINOv3Loss(DETRLoss):
                 gt_score=None,
                 o2m=1,
                 **kwargs):
+        decoder_embeddings = kwargs.get("decoder_embeddings", None)
+        difficulty_scores = kwargs.get("difficulty_scores", None)
+
         
         if o2m != 1:
             gt_boxes_copy = [box.tile([o2m, 1]) for box in gt_bbox]
@@ -605,22 +817,26 @@ class DINOv3Loss(DETRLoss):
             postfix=postfix,
             dn_match_indices=None,
             num_gts=num_gts_copy,
-            gt_score=gt_score if gt_score is not None else None)
+            gt_score=gt_score if gt_score is not None else None,
+            decoder_embeddings=decoder_embeddings,
+            difficulty_scores=difficulty_scores,
+            )
 
         if self.aux_loss:
             total_loss.update(
                 self._get_loss_aux(
-                    boxes[:-1],
-                    logits[:-1],
-                    gt_boxes_copy,
-                    gt_class_copy,
-                    self.num_classes,
-                    num_gts_copy,
-                    dn_match_indices=None,
-                    postfix=postfix,
-                    masks=masks[:-1] if masks is not None else None,
-                    gt_mask=gt_mask,
-                    gt_score=gt_score if gt_score is not None else None))
+                   boxes[:-1],
+                   logits[:-1],
+                   gt_boxes_copy,
+                   gt_class_copy,
+                   self.num_classes,
+                   num_gts_copy,
+                   dn_match_indices=None,
+                   postfix=postfix,
+                   masks=masks[:-1] if masks is not None else None,
+                   gt_mask=gt_mask,
+                   gt_score=gt_score if gt_score is not None else None,
+))
 
         if dn_meta is not None:
             num_gts = self._get_num_gts(gt_class)

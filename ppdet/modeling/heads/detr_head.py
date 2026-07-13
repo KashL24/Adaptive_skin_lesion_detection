@@ -534,7 +534,10 @@ class MaskDINOHead(nn.Layer):
                 dn_out_logits=dn_out_logits,
                 dn_out_bboxes=dn_out_bboxes,
                 dn_out_masks=dn_out_masks,
-                dn_meta=dn_meta)
+                dn_meta=dn_meta,
+                decoder_embeddings=decoder_embeddings,
+                difficulty_scores=inputs.get("difficulty_score", None),
+                )
         else:
             return (dec_out_bboxes[-1], dec_out_logits[-1], dec_out_masks[-1])
 
@@ -568,6 +571,8 @@ class DINOv3Head(nn.Layer):
                 total_enc_queries = enc_topk_bboxes.shape[1]
                 loss = {}
                 if self.o2m_branch:
+
+                    
                     dec_out_bboxes, dec_out_bboxes_o2m = paddle.split(dec_out_bboxes, [total_dec_queries - self.num_queries_o2m, self.num_queries_o2m], axis=2)
                     dec_out_logits, dec_out_logits_o2m = paddle.split(dec_out_logits, [total_dec_queries - self.num_queries_o2m, self.num_queries_o2m], axis=2)
                     enc_topk_bboxes, enc_topk_bboxes_o2m = paddle.split(enc_topk_bboxes, [total_enc_queries - self.num_queries_o2m, self.num_queries_o2m], axis=1)
@@ -579,11 +584,13 @@ class DINOv3Head(nn.Layer):
                         out_bboxes_o2m,
                         out_logits_o2m,
                         inputs['gt_bbox'],
-                        inputs['gt_class'],
+                        inputs['gt_class'], 
                         dn_out_bboxes=None,
                         dn_out_logits=None,
                         dn_meta=None,
-                        o2m=self.o2m)
+                        o2m=self.o2m,
+                        decoder_embeddings=decoder_embeddings,
+                        difficulty_scores=inputs.get("difficulty_score", None),)
                     for key, value in loss_o2m.items():
                         key = key + '_o2m_branch'
                         loss.update({
@@ -614,7 +621,9 @@ class DINOv3Head(nn.Layer):
                         inputs['gt_class'],
                         dn_out_bboxes=dn_out_bboxes_gid,
                         dn_out_logits=dn_out_logits_gid,
-                        dn_meta=dn_meta[g_id])
+                        dn_meta=dn_meta[g_id],
+                        decoder_embeddings=decoder_embeddings,
+                        difficulty_scores=inputs.get("difficulty_score", None),)
                     # sum loss
                     for key, value in loss_gid.items():
                         loss.update({
