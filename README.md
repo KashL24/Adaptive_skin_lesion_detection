@@ -1,169 +1,260 @@
-English | [简体中文](README_cn.md)
+# Adaptive Query Allocation for Robust Skin Lesion Detection using RT-DETRv3
 
-## RT-DETRv3: Real-time End-to-End Object Detection with Hierarchical Dense Positive Supervision
+## Overview
 
-:fire::fire:**[WACV 2025 Oral]** The official implementation of the paper "[RT-DETRv3: Real-time End-to-End Object Detection with Hierarchical Dense Positive Supervision](https://arxiv.org/pdf/2409.08475)". \
-[[`arXiv`](https://arxiv.org/pdf/2409.08475)] 
-![image](https://github.com/user-attachments/assets/5910d729-cc44-49f4-b404-b6631576930f)
+This repository presents an enhanced version of **RT-DETRv3** for **skin lesion detection** by introducing **Adaptive Query Allocation** and **Adaptive Diversity Learning**. The proposed method dynamically allocates decoder queries based on lesion difficulty and encourages diverse query representations to improve localization of challenging skin lesions.
 
+This work is developed using the **ISIC 2018 Skin Lesion Dataset** and is intended for research purposes.
 
-## Model Zoo on COCO
+---
 
-| Model | Epoch | Backbone  | Input shape | $AP^{val}$ | $AP^{val}_{50}$| Params(M) | FLOPs(G) |  T4 TensorRT FP16(FPS) | Weight | Config | Log
-|:--------------:|:-----:|:----------:| :-------:|:--------------------------:|:---------------------------:|:---------:|:--------:| :---------------------: |:------------------------------------------------------------------------------------:|:-------------------------------------------:|:---|
-| RT-DETRv3-R18 | 6x |  ResNet-18 | 640 | 48.1 | 66.2 | 20 | 60 | 217 |[baidu 网盘](https://pan.baidu.com/s/1s7lyT6_fHmczoegQZXdX-w?pwd=54jp)  [google drive](https://drive.google.com/file/d/1zIDOjn1qDccC3TBsDlGQHOjVrehd26bk/view?usp=drive_link)| [config](./configs/rtdetrv3/rtdetrv3_r18vd_6x_coco.yml) | 
-| RT-DETRv3-R34 | 6x |  ResNet-34 | 640 | 49.9 | 67.7 | 31 | 92 | 161 | [baidu 网盘](https://pan.baidu.com/s/1VCg6oqNVF9_ZZdmlhUBgSA?pwd=pi32) [google drive](https://drive.google.com/file/d/12-wqAF8i67eqbocaWPK33d4tFkN2wGi2/view?usp=drive_link)| [config](./configs/rtdetrv3/rtdetrv3_r34vd_6x_coco.yml) | 
-| RT-DETRv3-R50 | 6x |  ResNet-50 | 640 | 53.4 | 71.7 | 42 | 136 | 108 | [baidu 网盘](https://pan.baidu.com/s/1DuvrpMIqbU5okoDp16C94g?pwd=wrxy) [google drive](https://drive.google.com/file/d/1wfJE-QgdgqKE0IkiTuoD5HEbZwwZg3sQ/view?usp=drive_link)| [config](./configs/rtdetrv3/rtdetrv3_r50vd_6x_coco.yml) | 
-| RT-DETRv3-R101 | 6x |  ResNet-101 | 640 | 54.6 | 73.1 | 76 | 259 | 74 |  | [config](./configs/rtdetrv3/rtdetrv3_r101vd_6x_coco.yml) | 
+## Motivation
 
+RT-DETRv3 uses a fixed query allocation strategy for all objects. However, skin lesions exhibit significant variations in:
 
-**Notes:**
-- RT-DETRv3 uses 4 GPUs for training.
-- RT-DETRv3 was trained on COCO train2017 and evaluated on val2017.
+- Lesion size
+- Border irregularity
+- Boundary clarity
+- Shape complexity
 
-## Model Zoo on LVIS
+Using the same number of decoder queries for every lesion can result in inefficient supervision.
 
-| Model | Epoch | Backbone  | Input shape | AP | $AP_{r}$ | $AP_{c}$ | $AP_{f}$ | Weight | Config | Log
-|:--------------:|:-----:|:----------:| :-------:|:--------------------------:|:---------------------------:|:---------:| :---------------------: |:------------------------------------------------------------------------------------:|:-------------------------------------------:|:---|
-| RT-DETRv3-R18 | 6x |  ResNet-18 | 640 | 26.5 | 12.5 | 24.3 | 35.2 |  | [config](./configs/rtdetrv3/rtdetrv3_r18vd_6x_lvis.yml) | 
-| RT-DETRv3-R50 | 6x |  ResNet-50 | 640 | 33.9 | 20.2 | 32.5 | 41.5 |  | [config](./configs/rtdetrv3/rtdetrv3_r50vd_6x_lvis.yml) |
+Our proposed method introduces **difficulty-aware adaptive query selection** to provide stronger supervision for challenging lesions while maintaining efficient training.
 
+---
 
-## Quick start
+# Proposed Method
 
-<details open>
-<summary>Install requirements</summary>
+The proposed framework consists of three major components:
 
-<!-- - PaddlePaddle == 2.4.2 -->
-```bash
-pip install -r requirements.txt
-```
+## 1. Lesion Difficulty Estimation
 
-</details>
+Each lesion is assigned a difficulty score based on three handcrafted features:
 
-<details>
-<summary>Compile (optional)</summary>
+- Lesion Size
+- Border Irregularity
+- Boundary Clarity
 
-```bash
-cd ./ppdet/modeling/transformers/ext_op/
+The normalized features are combined to generate a **difficulty score** for every training image.
 
-python setup_ms_deformable_attn_op.py install
-```
-See [details](./ppdet/modeling/transformers/ext_op/)
-</details>
+---
 
+## 2. Adaptive Query Allocation
 
-<details>
-<summary>Data preparation</summary>
+During training:
 
-- Download and extract COCO 2017 train and val images.
-```
-path/to/coco/
-  annotations/  # annotation json files
-  train2017/    # train images
-  val2017/      # val images
-```
-- Modify config [`dataset_dir`](configs/datasets/coco_detection.yml)
-</details>
+- Hungarian Matching assigns positive decoder queries.
+- IoU is computed between matched predictions and ground truth.
+- Positive queries are ranked according to IoU.
+- The lesion difficulty determines the number of positive queries (**Adaptive Top-K**) used for supervision.
 
+Hard lesions receive more decoder queries than easy lesions.
 
-<details>
-<summary>Training & Evaluation & Testing</summary>
+---
 
-- Training on a Single GPU:
+## 3. Adaptive Diversity Loss
 
-```shell
-# training on single-GPU
-export CUDA_VISIBLE_DEVICES=0
-python tools/train.py -c configs/rtdetrv3/rtdetrv3_r18vd_6x_coco.yml --eval
-```
+To avoid redundant query representations:
 
-- Training on Multiple GPUs:
+- Decoder query embeddings are extracted.
+- Selected positive embeddings are normalized.
+- Pairwise cosine similarity is computed.
+- Diversity loss encourages different positive queries to capture different lesion characteristics.
 
-```shell
-# training on multi-GPU
-export CUDA_VISIBLE_DEVICES=0,1,2,3
-python -m paddle.distributed.launch --gpus 0,1,2,3 tools/train.py -c configs/rtdetrv3/rtdetrv3_r18vd_6x_coco.yml --fleet --eval
-```
+The diversity loss is weighted according to lesion difficulty.
 
-- Evaluation:
+---
 
-```shell
-python tools/eval.py -c configs/rtdetrv3/rtdetrv3_r18vd_6x_coco.yml \
-              -o weights=https://bj.bcebos.com/v1/paddledet/models/rtdetrv3_r18vd_6x_coco.pdparams
-```
-
-- Inference:
-
-```shell
-python tools/infer.py -c configs/rtdetrv3/rtdetrv3_r18vd_6x_coco.yml \
-              -o weights=https://bj.bcebos.com/v1/paddledet/models/rtdetrv3_r18vd_6x_coco.pdparams \
-              --infer_img=./demo/000000570688.jpg
-```
-
-</details>
-
-
-## Deploy
-
-<details open>
-<summary>1. Export model </summary>
-
-```shell
-python tools/export_model.py -c configs/rtdetrv3/rtdetrv3_r18vd_6x_coco.yml \
-              -o weights=https://bj.bcebos.com/v1/paddledet/models/rtdetrv3_r18vd_6x_coco.pdparams trt=True \
-              --output_dir=output_inference
-```
-
-</details>
-
-<details>
-<summary>2. Convert to ONNX </summary>
-
-- Install [Paddle2ONNX](https://github.com/PaddlePaddle/Paddle2ONNX) and ONNX
-
-```shell
-pip install onnx==1.13.0
-pip install paddle2onnx==1.0.5
-```
-
-- Convert:
-
-```shell
-paddle2onnx --model_dir=./output_inference/rtdetrv3_r18vd_6x_coco/ \
-            --model_filename model.pdmodel  \
-            --params_filename model.pdiparams \
-            --opset_version 16 \
-            --save_file rtdetrv3_r18vd_6x_coco.onnx
-```
-</details>
-
-<details>
-<summary>3. Convert to TensorRT </summary>
-
-- TensorRT version >= 8.5.1
-- Inference can refer to [Bennchmark](../benchmark)
-
-```shell
-trtexec --onnx=./rtdetrv3_r18vd_6x_coco.onnx \
-        --workspace=4096 \
-        --shapes=image:1x3x640x640 \
-        --saveEngine=rtdetrv3_r18vd_6x_coco.trt \
-        --avgRuns=100 \
-        --fp16
-```
--
-</details>
-
-## Citation
-
-If you find RT-DETRv3 useful in your research, please consider giving a star ⭐ and citing:
+# Training Pipeline
 
 ```
-@article{wang2024rt,
-  title={RT-DETRv3: Real-time End-to-End Object Detection with Hierarchical Dense Positive Supervision},
-  author={Wang, Shuo and Xia, Chunlong and Lv, Feng and Shi, Yifeng},
-  journal={arXiv preprint arXiv:2409.08475},
-  year={2024}
-}
+Input Image
+      │
+      ▼
+Backbone (ResNet18)
+      │
+      ▼
+Encoder
+      │
+      ▼
+Transformer Decoder
+      │
+      ▼
+950 Decoder Queries
+      │
+      ▼
+Hungarian Matching
+      │
+      ▼
+Matched Positive Queries
+      │
+      ▼
+IoU Ranking
+      │
+      ▼
+Difficulty Score
+      │
+      ▼
+Adaptive Top-K Selection
+      │
+      ▼
+Selected Query Embeddings
+      │
+      ▼
+Cosine Similarity Diversity Loss
+      │
+      ▼
+Difficulty Weighting
+      │
+      ▼
+Final Adaptive Diversity Loss
+      │
+      ▼
+Backpropagation
 ```
+
+---
+
+# Inference Pipeline
+
+During inference, no difficulty score is required.
+
+```
+Input Image
+      │
+      ▼
+Backbone
+      │
+      ▼
+Encoder
+      │
+      ▼
+Transformer Decoder
+      │
+      ▼
+Bounding Box Predictions
+      │
+      ▼
+Confidence Scores
+      │
+      ▼
+Final Skin Lesion Detection
+```
+
+The adaptive strategy only influences training. The trained model performs standard inference without additional computational overhead.
+
+---
+
+# Features
+
+- Difficulty-aware query allocation
+- Adaptive Top-K supervision
+- Cosine similarity diversity loss
+- Difficulty-weighted diversity learning
+- RT-DETRv3 based architecture
+- End-to-end transformer detector
+- Single-stage object detection
+
+---
+
+# Dataset
+
+**ISIC 2018 Skin Lesion Dataset**
+
+- Task: Lesion Detection
+- Number of Classes: 1 (Lesion)
+- Annotation Format: COCO
+
+---
+
+# Repository Structure
+
+```
+ppdet/
+│
+├── data/
+│   └── source/
+│       └── coco.py
+│
+├── modeling/
+│   ├── heads/
+│   │     └── detr_head.py
+│   │
+│   └── losses/
+│         ├── detr_loss.py
+│         └── diversity_loss.py
+│
+└── utils/
+      └── difficulty_score.py
+```
+
+---
+
+# Files Modified
+
+- `ppdet/data/source/coco.py`
+- `ppdet/utils/difficulty_score.py`
+- `ppdet/modeling/losses/diversity_loss.py`
+- `ppdet/modeling/losses/detr_loss.py`
+- `ppdet/modeling/heads/detr_head.py`
+
+---
+
+# Methodology
+
+1. Compute lesion difficulty score.
+2. Load difficulty scores during training.
+3. Pass difficulty scores into the loss function.
+4. Obtain decoder query embeddings.
+5. Perform Hungarian Matching.
+6. Rank matched queries using IoU.
+7. Select Adaptive Top-K positive queries.
+8. Compute diversity loss using cosine similarity.
+9. Weight diversity loss using lesion difficulty.
+10. Optimize RT-DETRv3 using the proposed adaptive loss.
+
+---
+
+# Expected Advantages
+
+- Better localization of difficult lesions
+- Improved representation diversity
+- Reduced redundant decoder queries
+- Better supervision for challenging samples
+- Potential improvement in AP and AP50
+
+---
+
+# Current Status
+
+- [x] Difficulty score generation
+- [x] Difficulty-aware dataset loader
+- [x] Decoder embedding extraction
+- [x] Adaptive Query Allocation
+- [x] Adaptive Top-K selection
+- [x] Adaptive Diversity Loss
+- [x] Difficulty-weighted training
+- [x] Integration into RT-DETRv3
+- [x] Successful model training
+- [ ] Extensive evaluation and benchmarking (ongoing)
+
+---
+
+# Future Work
+
+- Evaluate on additional dermoscopy datasets.
+- Investigate learnable difficulty estimation.
+- Extend adaptive query allocation to multi-class medical detection.
+- Explore adaptive query diversity for segmentation tasks.
+
+---
+
+# Citation
+
+If you use this repository in your research, please cite the corresponding paper (to be added).
+
+---
+
+# Acknowledgements
+
+This work is based on the RT-DETRv3 framework and extends it with adaptive query allocation and diversity learning for skin lesion detection.
