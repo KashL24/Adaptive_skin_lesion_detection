@@ -9,7 +9,7 @@ _BASE_: [
 architecture: RTDETRV3
 
 find_unused_parameters: True
-log_iter: 50
+log_iter: 20
 
 snapshot_epoch: 1
 save_dir: output/rtdetrv3_isic
@@ -18,7 +18,7 @@ o2m_branch: True
 num_queries_o2m: 450
 
 # Override pretrained weights
-pretrain_weights: https://paddledet.bj.bcebos.com/models/pretrained/ResNet18_vd_pretrained.pdparams
+pretrain_weights: https://paddledet.bj.bcebos.com/models/pretrained/ResNet50_vd_pretrained.pdparams
 
 RTDETRV3:
   backbone: ResNet
@@ -29,7 +29,7 @@ RTDETRV3:
   post_process: DETRPostProcess
 
 ResNet:
-  depth: 18
+  depth: 50
   variant: d
   return_idx: [1, 2, 3]
   freeze_at: -1
