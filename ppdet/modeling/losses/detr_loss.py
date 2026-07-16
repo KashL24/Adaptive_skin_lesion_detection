@@ -79,6 +79,14 @@ class DETRLoss(nn.Layer):
         # Adaptive Diversity Loss
         self.diversity_loss = DiversityLoss()
 
+        self.giou_loss = GIoULoss()
+
+# Adaptive Diversity Loss
+        self.diversity_loss = DiversityLoss()
+
+# Difficulty-aware loss weighting
+        self.difficulty_alpha = 0.5
+
     def _get_loss_class(self,
                         logits,
                         gt_class,
