@@ -142,7 +142,7 @@ class DETRLoss(nn.Layer):
         return {name_class: loss_}
 
     def _get_loss_bbox(self, boxes, gt_bbox, match_indices, num_gts,
-                       postfix=""):
+                       postfix="",difficulty_scores=None):
         # boxes: [b, query, 4], gt_bbox: list[[n, 4]]
         name_bbox = "loss_bbox" + postfix
         name_giou = "loss_giou" + postfix
@@ -155,12 +155,83 @@ class DETRLoss(nn.Layer):
 
         src_bbox, target_bbox = self._get_src_target_assign(boxes, gt_bbox,
                                                             match_indices)
-        loss[name_bbox] = self.loss_coeff['bbox'] * F.l1_loss(
-            src_bbox, target_bbox, reduction='sum') / num_gts
-        loss[name_giou] = self.giou_loss(
-            bbox_cxcywh_to_xyxy(src_bbox), bbox_cxcywh_to_xyxy(target_bbox))
-        loss[name_giou] = loss[name_giou].sum() / num_gts
-        loss[name_giou] = self.loss_coeff['giou'] * loss[name_giou]
+        # ---------------------------------
+# Difficulty-aware BBox Loss
+# ---------------------------------
+
+           l1_loss = F.l1_loss(
+    src_bbox,
+    target_bbox,
+    reduction='none'
+)
+
+          if difficulty_scores is not None:
+
+             weights = []
+
+             for batch_idx, (_, gt_idx) in enumerate(match_indices):
+
+                 if len(gt_idx) == 0:
+                    continue
+
+                 difficulty = float(difficulty_scores[batch_idx])
+
+                 weight = 1.0 + 0.5 * difficulty
+
+                 weights.extend([weight] * len(gt_idx))
+
+            if len(weights) > 0:
+
+                weights = paddle.to_tensor(
+            weights,
+            dtype=l1_loss.dtype
+        ).unsqueeze(-1)
+
+           l1_loss = l1_loss * weights
+
+         loss[name_bbox] = (
+          self.loss_coeff['bbox']
+    * l1_loss.sum()
+    / num_gts
+)
+        # ---------------------------------
+# Difficulty-aware GIoU Loss
+# ---------------------------------
+
+        giou_loss = self.giou_loss(
+    bbox_cxcywh_to_xyxy(src_bbox),
+    bbox_cxcywh_to_xyxy(target_bbox)
+)
+
+       if difficulty_scores is not None:
+
+           weights = []
+
+          for batch_idx, (_, gt_idx) in enumerate(match_indices):
+
+              if len(gt_idx) == 0:
+                 continue
+
+                 difficulty = float(difficulty_scores[batch_idx])
+
+                 weight = 1.0 + 0.5 * difficulty
+
+                 weights.extend([weight] * len(gt_idx))
+
+         if len(weights) > 0:
+
+             weights = paddle.to_tensor(
+            weights,
+            dtype=giou_loss.dtype
+        )
+
+            giou_loss = giou_loss * weights
+
+       loss[name_giou] = (
+    self.loss_coeff['giou']
+    * giou_loss.sum()
+    / num_gts
+)
         return loss
 
     def _get_loss_mask(self, masks, gt_mask, match_indices, num_gts,
