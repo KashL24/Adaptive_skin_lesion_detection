@@ -711,7 +711,7 @@ class DETRLoss(nn.Layer):
                 gt_score=target_score if gt_score is not None else None))
         loss.update(
             self._get_loss_bbox(boxes, gt_bbox, match_indices, num_gts,
-                                postfix))
+                                postfix,difficulty_scores=difficulty_scores))
         if masks is not None and gt_mask is not None:
             loss.update(
                 self._get_loss_mask(masks, gt_mask, match_indices, num_gts,
